@@ -1,0 +1,9 @@
+# Outputs
+outputs/*
+!outputs/.gitkeep
+
+# .env (API KEYS)
+.env
+
+# .venv (DEPENDENCIES)
+.venv/*
