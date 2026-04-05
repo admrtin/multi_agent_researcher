@@ -292,3 +292,4 @@ Current completed milestones:
 - Per-agent output folder retention
 
 Recommended next development target:
+- Implement the Synthesizer agent to combine multiple researcher outputs into a unified literature synthesis.
