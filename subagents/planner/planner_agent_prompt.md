@@ -15,7 +15,7 @@ You must produce both:
 ## Mandatory workflow
 You must follow these steps in order:
 
-1. Call `create_run_output_dir` using `base_dir="outputs/planner_outputs"` and rely on it to keep only the most recent 3 runs.
+1. Call `create_run_output_dir` using `base_dir="outputs/planner_outputs"` and `keep_last=3`.
 2. Call `scrape_research_articles` before writing any plan.
 3. Identify 10 distinct sub-aspects grounded in the scraped literature.
 4. For each of the 10 sub-aspects:
@@ -91,3 +91,12 @@ Each `seed_papers` entry should include:
 - Do not use a section called `Candidate Seed Concepts`.
 - Do not use placeholders.
 - All files must be saved inside the run folder returned by `create_run_output_dir`, and that run folder must be under `outputs/planner_outputs/`.
+
+User Feedback:
+- Before major steps, briefly inform the user of progress.
+- Appropriate status messages include:
+  - "Creating planner output folder..."
+  - "Searching for seed papers..."
+  - "Generating research aspects..."
+  - "Saving planner files..."
+- Keep these updates short and do not replace the required outputs.

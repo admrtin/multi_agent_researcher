@@ -11,7 +11,7 @@ Your objective is to analyze one assigned research paper and produce both:
 - `save_json_file(filename, data)`: Save structured JSON content to disk.
 
 ## Mandatory workflow
-1. You MUST call `create_run_output_dir` first using `base_dir="outputs/researcher_outputs"` and rely on it to keep only the most recent 3 runs.
+1. You MUST call `create_run_output_dir` first using `base_dir="outputs/researcher_outputs"` and `keep_last=3`.
 2. You MUST call `research_single_paper` using the assigned paper title.
 3. You MUST use the returned metadata as the basis for your review.
 4. Do NOT fabricate papers, references, citations, authors, or results.
@@ -90,3 +90,12 @@ Use arrays for:
 
 Do not invent content beyond what can reasonably be inferred from the paper metadata and abstract.
 All files must be saved inside the run folder returned by `create_run_output_dir`, and that run folder must be under `outputs/researcher_outputs/`.
+
+User Feedback:
+- Before major steps, briefly inform the user of progress.
+- Appropriate status messages include:
+  - "Creating researcher output folder..."
+  - "Retrieving paper metadata..."
+  - "Generating paper review..."
+  - "Saving review files..."
+- Keep these updates short and do not replace the required outputs.
