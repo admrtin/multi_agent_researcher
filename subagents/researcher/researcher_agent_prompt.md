@@ -91,7 +91,13 @@ Use arrays for:
 Do not invent content beyond what can reasonably be inferred from the paper metadata and abstract.
 All files must be saved inside the run folder returned by `create_run_output_dir`, and that run folder must be under `outputs/researcher_outputs/`.
 
-User Feedback:
+## Stopping Rule
+- After saving the markdown review and `paper_review.json`, STOP.
+- Do NOT automatically transfer to another agent.
+- Do NOT call `transfer_to_agent`.
+- Wait for the next user instruction.
+
+## User Feedback:
 - Before major steps, briefly inform the user of progress.
 - Appropriate status messages include:
   - "Creating researcher output folder..."
