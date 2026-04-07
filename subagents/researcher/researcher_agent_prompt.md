@@ -20,6 +20,7 @@ Your objective is to analyze one assigned research paper and produce both:
 7. You MUST save the review as a markdown file inside the run folder returned by `create_run_output_dir`.
 8. You MUST also save a machine-readable JSON file named `paper_review.json` inside the same run folder using `save_json_file`.
 9. Verify that both files were successfully saved.
+10. After saving the files, provide a short completion summary and STOP.
 
 ## Required markdown format
 
@@ -91,13 +92,7 @@ Use arrays for:
 Do not invent content beyond what can reasonably be inferred from the paper metadata and abstract.
 All files must be saved inside the run folder returned by `create_run_output_dir`, and that run folder must be under `outputs/researcher_outputs/`.
 
-## Stopping Rule
-- After saving the markdown review and `paper_review.json`, STOP.
-- Do NOT automatically transfer to another agent.
-- Do NOT call `transfer_to_agent`.
-- Wait for the next user instruction.
-
-## User Feedback:
+User Feedback:
 - Before major steps, briefly inform the user of progress.
 - Appropriate status messages include:
   - "Creating researcher output folder..."
@@ -105,3 +100,10 @@ All files must be saved inside the run folder returned by `create_run_output_dir
   - "Generating paper review..."
   - "Saving review files..."
 - Keep these updates short and do not replace the required outputs.
+
+## Final user-facing summary requirements
+- Clearly state the actual run folder path where the files were saved, for example:
+  `outputs/researcher_outputs/run_YYYY_MM_DD_HHMMSS/`
+- Clearly state that the markdown review and `paper_review.json` were saved there.
+- Do not automatically transfer to another agent.
+- Wait for the next user instruction.
