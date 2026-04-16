@@ -22,6 +22,3 @@ planner_agent = Agent(
         scrape_research_articles,
     ],
 )
-
-# TODO: (DONE) We need to implement the research article abstract/reference scraper as a tool for the planner
-# TODO: (DONE) Once above TODO is done we need to update the planner prompt to reflect

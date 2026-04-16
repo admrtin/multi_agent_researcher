@@ -343,13 +343,34 @@ def get_latest_planner_manifest(base_dir: str = "outputs/planner_outputs") -> st
 
     raise FileNotFoundError(f"No planner_manifest.json found in any run folder under: {base_dir}")
 
+def list_researcher_outputs(base_dir: str = "outputs") -> str:
+    """Lists all researcher output files available for validation."""
+    path = Path(base_dir)
+    files = list(path.rglob("*.json")) + list(path.rglob("*.md"))
+    return json.dumps([f.as_posix() for f in files], indent=2)
+
+def read_researcher_output(researcher_output_path: str) -> str:
+    """Reads a researcher output file and returns its content for validation."""
+    path = Path(researcher_output_path)
+    if not path.exists():
+        return json.dumps({"status": "error", "message": f"File not found: {researcher_output_path}"})
+    return json.dumps({"status": "success", "content": path.read_text(encoding="utf-8")})
+
+def get_latest_run_dir(base_dir: str = "outputs") -> str:
+    """Returns the most recent run directory path."""
+    base_path = Path(base_dir)
+    run_dirs = sorted(base_path.glob("run_*"), key=lambda p: p.name)
+    if not run_dirs:
+        raise FileNotFoundError("No run directories found.")
+    return run_dirs[-1].as_posix()
 
 @dataclass(frozen=True)
 class GeminiModel:
-    ROOT: str = "gemini-3-flash-preview"
-    PLANNER: str = "gemini-3-flash-preview"
-    RESEARCHER: str = "gemini-3-flash-preview"
-    SYNTHESIZER: str = "gemini-3-flash-preview"
+    ROOT: str = "gemini-2.5-flash"
+    PLANNER: str = "gemini-2.5-flash"
+    RESEARCHER: str = "gemini-2.5-flash"
+    VALIDATOR: str = "gemini-2.5-flash"
+    SYNTHESIZER: str = "gemini-2.5-flash"
 
 # Instance for easy import
 gemini_models = GeminiModel()
