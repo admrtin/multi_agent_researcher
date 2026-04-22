@@ -6,6 +6,7 @@ from tools.agent_tools import (
     research_single_paper,
     save_json_file,
     gemini_models,
+    load_pdf_file,
 )
 
 prompt = Path("./subagents/researcher/researcher_agent_prompt.md").read_text()
@@ -20,5 +21,6 @@ researcher_agent = Agent(
         research_single_paper,
         save_markdown_file,
         save_json_file,
+        load_pdf_file,
     ],
 )

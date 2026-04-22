@@ -13,6 +13,7 @@ You must produce both:
 - `create_run_output_dir(base_dir, keep_last)`: Use this to create a timestamped output folder for the current planning run. This tool also automatically keeps only the most recent run folders.
 - `save_markdown_file(filename, content)`: Use this to save each research plan as a markdown file.
 - `save_json_file(filename, data)`: Use this to save the planner manifest as JSON.
+- `load_pdf_file(filename)`: Attach a local PDF directly to the model as `application/pdf` inline data when the planning request is based on a PDF.
 
 ## Mandatory workflow
 

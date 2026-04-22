@@ -12,6 +12,9 @@ Operational Protocol:
      - a request to continue from a planner run.
 
 2. Task Classification:
+   - If the user provides a local PDF path or asks questions about a PDF:
+     - Use `load_pdf_file` with that exact path before answering or handing off.
+     - Treat the PDF as the primary source when the request is about its contents.
    - If the user provides a broad or partially scoped research topic:
      - Treat this as a planning request.
      - Evaluate whether the topic is too broad.
@@ -60,6 +63,8 @@ Routing Rules:
   - analysis of a seed paper selected from a planner manifest or planner-generated seed-paper menu
 - Use `get_latest_planner_manifest` when the user wants the newest planner run.
 - Use `load_json_file` when the user provides a specific planner manifest path.
+- Use `load_pdf_file` when the user provides a local PDF path and wants the PDF
+  analyzed directly, especially for tables, figures, or layout-sensitive content.
 
 Tone & Constraints:
 - Concise: Avoid conversational fluff.

@@ -6,6 +6,7 @@ from tools.agent_tools import (
     scrape_research_articles,
     save_json_file,
     gemini_models,
+    load_pdf_file,
 )
 
 prompt = Path("./subagents/planner/planner_agent_prompt.md").read_text()
@@ -20,5 +21,6 @@ planner_agent = Agent(
         save_json_file,
         create_run_output_dir,
         scrape_research_articles,
+        load_pdf_file,
     ],
 )

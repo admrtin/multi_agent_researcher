@@ -10,6 +10,7 @@ from tools.agent_tools import (
     get_latest_run_dir,
     get_latest_planner_manifest,
     gemini_models,
+    load_pdf_file,
 )
 
 researcher_tool= agent_tool.AgentTool(agent=researcher_agent)
@@ -28,5 +29,6 @@ validator_agent = Agent(
         get_latest_planner_manifest,
         save_markdown_file,
         save_json_file,
+        load_pdf_file,
     ],
 )

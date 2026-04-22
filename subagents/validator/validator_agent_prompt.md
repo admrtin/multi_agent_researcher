@@ -6,6 +6,9 @@ for synthesis when the research body is complete.
 
 ## Mandatory Workflow
 
+If validation requires reading a local PDF path, use `load_pdf_file` so the PDF
+is attached directly as `application/pdf` inline data.
+
 0. Use `list_researcher_outputs` and `get_latest_run_dir` to locate all existing
    researcher outputs. Do not assume a hardcoded path.
 1. Evaluate each file individually against the **Valid Output Criteria**.
