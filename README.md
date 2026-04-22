@@ -47,7 +47,7 @@ python -m pip install -r requirements.txt
 
 ---
 
-## API Keys
+## Authentication and Model Access
 
 Copy the example environment file:
 
@@ -55,17 +55,48 @@ Copy the example environment file:
 cp .env.example .env
 ```
 
-Then edit `.env` and provide your keys.
+Then edit `.env`.
 
-### Supported keys
+### Option A: Vertex AI (recommended)
 
-- `GOOGLE_API_KEY`
+Use this mode when you want usage billed through your Google Cloud project credits.
+
+Required `.env` values:
+
+- `GOOGLE_GENAI_USE_VERTEXAI=true`
+- `GOOGLE_CLOUD_PROJECT=<your-project-id>`
+- `GOOGLE_CLOUD_LOCATION=us-central1` (or another supported region)
+
+Authenticate with Application Default Credentials (ADC):
+
+```bash
+gcloud auth application-default login
+gcloud config set project <your-project-id>
+```
+
+Enable required API:
+
+```bash
+gcloud services enable aiplatform.googleapis.com
+```
+
+### Option B: API key mode (fallback)
+
+Use only if you are not using Vertex AI.
+
+Required `.env` value:
+
+- `GOOGLE_API_KEY=<your-api-key>`
+
+### Optional key
+
 - `SEMANTIC_SCHOLAR_API_KEY`
 
 ### Notes
 
-- `GOOGLE_API_KEY` is required for Gemini / Google ADK agent execution.
-- `SEMANTIC_SCHOLAR_API_KEY` is optional but recommended to reduce throttling when retrieving paper metadata from Semantic Scholar.
+- Vertex mode is selected when `GOOGLE_GENAI_USE_VERTEXAI=true` and ADC is configured.
+- API-key mode is selected when `GOOGLE_API_KEY` is set and Vertex mode is not enabled.
+- `SEMANTIC_SCHOLAR_API_KEY` is optional but recommended to reduce throttling for paper metadata retrieval.
 
 ---
 
@@ -102,9 +133,12 @@ When continuing from a planner run, Root loads the planner manifest and presents
 
 The Planner agent:
 - receives a refined research topic
-- queries Semantic Scholar for seed literature
+- queries arXiv first for seed literature
+- automatically falls back to Semantic Scholar and OpenAlex if arXiv returns no usable results
 - generates **10 aspect markdown files**
 - generates a machine-readable **`planner_manifest.json`**
+- names its outputs with a stable planner/topic identity prefix so the run folder and files clearly match the topic
+- uses a shared top-level `output_id` field in the manifest JSON
 
 Planner outputs are saved under:
 
@@ -113,18 +147,21 @@ outputs/planner_outputs/run_.../
 ```
 
 Each planner run typically contains:
-- `plan_01_...md`
-- `plan_02_...md`
+- plan files whose names include the stable planner/topic identity and topic slug
 - ...
-- `plan_10_...md`
-- `planner_manifest.json`
+- `planner_manifest.json` whose name includes the stable planner/topic identity and topic slug
+- the manifest JSON includes `output_id`
 
 ### 3. Researcher Agent
 
 The Researcher agent:
 - analyzes a selected paper
+- first tries arXiv and downloads the PDF when available
+- falls back to a web search for a direct PDF or reliable landing page if arXiv has nothing usable
 - generates a structured markdown review
 - generates a machine-readable **`paper_review.json`**
+- names its outputs with a stable researcher/paper identity prefix so the file path clearly shows which paper was analyzed
+- uses a shared top-level `output_id` field in the paper review JSON
 
 Researcher outputs are saved under:
 
@@ -133,14 +170,42 @@ outputs/researcher_outputs/run_.../
 ```
 
 Each researcher run typically contains:
-- one markdown review file
-- `paper_review.json`
+- one markdown review file whose name includes the stable paper identity and paper title
+- `paper_review.json` whose name includes the stable paper identity and paper title
+- the paper review JSON includes `output_id`
 
 ### 4. Synthesizer Agent
 
-The Synthesizer agent is not yet fully implemented.
+The Synthesizer agent is implemented and now:
+- reads researcher outputs from shared state
+- synthesizes a final related-work style report
+- writes synthesis markdown + JSON artifacts
+- spawns a validator pass for final quality checks
 
-The intended next step is for Synthesizer to consume multiple `paper_review.json` files and produce a higher-level literature synthesis.
+Synthesizer outputs are saved under:
+
+```text
+outputs/synthesizer_outputs/run_.../
+```
+
+Typical files:
+- `final_literature_review.md`
+- `synthesis_summary.json`
+- `validation_report.json`
+
+### 5. Shared State (Cross-Agent Communication)
+
+Agents exchange essential information through:
+
+```text
+outputs/shared_runs/run_.../shared_state.json
+```
+
+This file tracks:
+- planner assignments
+- researcher output registrations
+- validator decisions
+- synthesizer output registrations
 
 ---
 
@@ -180,11 +245,19 @@ Example structure:
 
 ```text
 outputs/
+  shared_runs/
+    run_...
+    run_...
+    run_...
   planner_outputs/
     run_...
     run_...
     run_...
   researcher_outputs/
+    run_...
+    run_...
+    run_...
+  synthesizer_outputs/
     run_...
     run_...
     run_...
@@ -211,7 +284,7 @@ This file contains:
 - aspect metadata
 - seed paper titles for each aspect
 
-### Researcher → Future Synthesizer / Expansion
+### Researcher → Synthesizer
 
 Researcher creates:
 - `paper_review.json`
@@ -226,6 +299,17 @@ This file contains:
 - citations for expansion
 
 These artifacts allow the system to move beyond plain chat-only coordination.
+
+### Shared State Across All Agents
+
+Shared communication registry:
+- `shared_state.json`
+
+Tracks:
+- planner assignments
+- researcher completions
+- validator decisions
+- synthesizer outputs
 
 ---
 
@@ -273,8 +357,9 @@ Analyze this paper: LLaVA-Med: Training a Large Language-and-Vision Assistant fo
 
 - The project currently works best as a CLI-driven ADK application.
 - Semantic Scholar retrieval is metadata-based and currently does not require PDF parsing.
-- Planner and Researcher are functioning for v1.
-- The next major feature is the Synthesizer agent.
+- Planner, Researcher, Validator, and Synthesizer are wired for artifact-driven orchestration.
+- arXiv is the primary paper search source; Semantic Scholar and OpenAlex are fallback sources.
+- Google Scholar is not used because it does not provide a stable official API for this workflow.
 
 ---
 
@@ -283,13 +368,13 @@ Analyze this paper: LLaVA-Med: Training a Large Language-and-Vision Assistant fo
 Current completed milestones:
 - Root → Planner routing
 - Root → Researcher routing
+- Root → Synthesizer routing
 - Planner output generation
 - Researcher output generation
+- Researcher-level validation routing
+- Synthesizer-level validation routing
 - Planner manifest continuation
 - Latest-run and explicit-manifest continuation flows
-- Structured JSON handoff between Planner and Researcher
+- Structured JSON handoff across Planner, Researcher, Validator, and Synthesizer
 - Optional Semantic Scholar API key support
 - Per-agent output folder retention
-
-Recommended next development target:
-- Implement the Synthesizer agent to combine multiple researcher outputs into a unified literature synthesis.

@@ -1,57 +1,130 @@
 # JSON Architecture
 
-The run folder, defined in `run_folder.md`, should be instantiated at the start of the program.
+This project uses a shared JSON contract so agents can communicate by artifacts,
+not only by chat context.
 
-The JSON files that need to be created are:
-- In the validator of each researcher: `validation_criteria.json`
-- In the main folder: `planner_manifest.json`
+## Agent Flow
 
-## JSON Format
-### `validation_criteria.json`
+1. Planner receives the research question and identifies relevant papers.
+2. Planner spawns multiple researcher agents, one per selected paper.
+3. Each researcher writes a paper review and spawns a validator for that review.
+4. Synthesizer reads all validated researcher outputs and creates a final related-work style synthesis.
+5. Synthesizer spawns its own validator for final quality and correlation checks.
+
+## Required JSON Artifacts
+
+- `outputs/planner_outputs/run_.../planner_manifest.json`
+- `outputs/shared_runs/run_.../shared_state.json`
+- `outputs/researcher_outputs/run_.../paper_review.json`
+- `outputs/researcher_outputs/run_.../validation_report.json`
+- `outputs/synthesizer_outputs/run_.../synthesis_summary.json`
+- `outputs/synthesizer_outputs/run_.../validation_report.json`
+
+## planner_manifest.json
+
 ```json
 {
-    "summary_exists": false,
-    "summary_relevant_to_planner_topic": false,
-    "summary_scientifically_grounded": false,
-    "summary_grammatically_correct": false,
-    "citations_exist": false,
-    "citations_valid": false,
-    "citations_relevant_to_summary": false
-}
-```
-
-The researcher agent:
-1. deep dives into the paper assigned to it
-2. generates a markdown summary of the paper
-3. uses the validator sub-agent as an `agent_tool` to update the `validation_criteria.json` file
-
-If any of the values in the `validation_criteria.json` file are false, the researcher needs to fix their summary by looping back to step 2, adding or removing content from the summary. If the validator returns all true, the researcher's summary is complete and ready to be used by the synthesizer agent.
-
-### `planner_manifest.json`
-```json
-{
-    "timestamp": "<timestamp>",
-    "planner_topic": "<planner_topic>",
-    "researchers": [
+    "topic": "<planner topic>",
+    "planner_run_dir": "outputs/planner_outputs/run_...",
+    "shared_state_file": "outputs/shared_runs/run_.../shared_state.json",
+    "aspects": [
         {
-            "id": "researcher_1",
-            "paper": "<paper_name_1>.pdf",
-            "summary": "<paper_name_1>_summary.md",
-        },
+            "aspect_id": "aspect_01",
+            "title": "<aspect title>",
+            "plan_markdown_file": "outputs/planner_outputs/run_.../plan_01_...md",
+            "seed_papers": [
+                {
+                    "title": "<paper title>",
+                    "year": 2024,
+                    "url": "<optional url>"
+                }
+            ]
+        }
+    ],
+    "research_assignments": [
         {
-            "id": "researcher_2",
-            "paper": "<paper_name_2>.pdf",
-            "summary": "<paper_name_2>_summary.md",
-        },
-        /* ... */,
-        {
-            "id": "researcher_n",
-            "paper": "<paper_name_n>.pdf",
-            "summary": "<paper_name_n>_summary.md",
+            "researcher_id": "researcher_01",
+            "aspect_id": "aspect_01",
+            "paper_title": "<paper title>",
+            "paper_url": "<optional url>"
         }
     ]
 }
 ```
-The planner manifest contains the "global" information about the run, including the planner topic, the timestamp, and what papers/summaries each researcher is responsible for.
 
-The synthesizer agent needs to be aware of the entire contents of the `planner_manifest.json` file so that it can use the summaries to generate a comprehensive literature review.
+## shared_state.json
+
+This is the central communication file used by all agents.
+
+```json
+{
+    "planner_topic": "<planner topic>",
+    "planner_manifest_path": "outputs/planner_outputs/run_.../planner_manifest.json",
+    "run_dir": "outputs/shared_runs/run_...",
+    "created_at": "<iso timestamp>",
+    "assignments": [
+        {
+            "researcher_id": "researcher_01",
+            "aspect_id": "aspect_01",
+            "aspect_title": "<aspect>",
+            "paper_title": "<paper>",
+            "paper_url": "<url or null>",
+            "status": "assigned | completed",
+            "timestamp": "<iso timestamp>"
+        }
+    ],
+    "research_outputs": [
+        {
+            "researcher_id": "researcher_01",
+            "paper_title": "<paper>",
+            "review_markdown_file": "outputs/researcher_outputs/run_.../paper_review.md",
+            "review_json_file": "outputs/researcher_outputs/run_.../paper_review.json",
+            "validation_report_file": "outputs/researcher_outputs/run_.../validation_report.json",
+            "validation_status": "pass | fail | pending",
+            "timestamp": "<iso timestamp>"
+        }
+    ],
+    "validations": [
+        {
+            "validator_scope": "researcher | synthesizer",
+            "target_id": "researcher_01 | final_synthesis",
+            "status": "pass | fail",
+            "notes": "<summary>",
+            "report_file": "<path or null>",
+            "timestamp": "<iso timestamp>"
+        }
+    ],
+    "synthesis_outputs": [
+        {
+            "synthesis_markdown_file": "outputs/synthesizer_outputs/run_.../final_literature_review.md",
+            "synthesis_json_file": "outputs/synthesizer_outputs/run_.../synthesis_summary.json",
+            "validation_report_file": "outputs/synthesizer_outputs/run_.../validation_report.json",
+            "validation_status": "pass | fail | pending",
+            "timestamp": "<iso timestamp>"
+        }
+    ]
+}
+```
+
+## Validator report format
+
+Both researcher-level and synthesizer-level validator runs use:
+
+```json
+{
+    "validator_scope": "researcher | synthesizer",
+    "target_id": "<id>",
+    "status": "pass | fail",
+    "reasons": ["<reason>"],
+    "correlation_to_planner_question": "high | medium | low",
+    "scientific_grounding": "high | medium | low"
+}
+```
+
+## Why this contract works
+
+- Planner-to-researcher communication: explicit assignments.
+- Researcher-to-validator communication: local review artifact paths.
+- Researcher-to-synthesizer communication: shared `research_outputs` registry.
+- Synthesizer-to-validator communication: final synthesis artifact paths.
+- Full traceability: every stage writes status and validation outcome.

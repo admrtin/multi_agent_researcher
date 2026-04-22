@@ -1,7 +1,5 @@
 from pathlib import Path
 from google.adk.agents import Agent
-from google.adk.tools import agent_tool
-from subagents.researcher.agent import researcher_agent
 from tools.agent_tools import (
     save_markdown_file,
     save_json_file,
@@ -9,10 +7,11 @@ from tools.agent_tools import (
     list_researcher_outputs,
     get_latest_run_dir,
     get_latest_planner_manifest,
+    get_latest_shared_state,
+    register_validation_result,
+    stream_terminal_update,
     gemini_models,
 )
-
-researcher_tool= agent_tool.AgentTool(agent=researcher_agent)
 
 prompt = Path("./subagents/validator/validator_agent_prompt.md").read_text()
 agent_name = "VALIDATOR"
@@ -21,11 +20,13 @@ validator_agent = Agent(
     model=gemini_models.VALIDATOR,
     instruction=prompt,
     tools=[
-        researcher_tool,
+        stream_terminal_update,
         read_researcher_output,
         list_researcher_outputs,
         get_latest_run_dir,
         get_latest_planner_manifest,
+        get_latest_shared_state,
+        register_validation_result,
         save_markdown_file,
         save_json_file,
     ],
