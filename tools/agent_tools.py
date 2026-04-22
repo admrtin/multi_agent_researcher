@@ -79,6 +79,197 @@ def build_planner_output_identity(topic: str) -> str:
     return f"{topic_slug}_{digest}"
 
 
+def _default_planning_aspects() -> list[tuple[str, str]]:
+    return [
+        ("A01", "Sampling-Based Motion Planning"),
+        ("A02", "Optimization and Trajectory Planning"),
+        ("A03", "Model Predictive Control"),
+        ("A04", "Robust and Adaptive Control"),
+        ("A05", "Model-Free Reinforcement Learning"),
+        ("A06", "Model-Based Reinforcement Learning"),
+        ("A07", "Sim-to-Real and Generalization"),
+        ("A08", "Multi-Robot Coordination and Safety"),
+    ]
+
+
+def execute_planner_pipeline(
+    topic: str,
+    max_selected_papers: int = 8,
+    max_aspects: int = 8,
+) -> str:
+    """
+    Deterministic planner setup used to avoid prompt-only orchestration failures.
+
+    It creates planner artifacts and shared state, then returns selected papers
+    for downstream researcher spawning.
+    """
+    safe_max_papers = max(1, min(max_selected_papers, 12))
+    safe_max_aspects = max(1, min(max_aspects, 8))
+
+    # Always start from a clean output workspace for a fresh run.
+    reset_output_workspace(outputs_dir="outputs")
+
+    output_id = build_planner_output_identity(topic)
+    planner_run_dir = create_run_output_dir(
+        base_dir="outputs/planner_outputs",
+        keep_last=3,
+        run_name=output_id,
+    )
+
+    raw_search = scrape_research_articles(
+        topic=topic,
+        max_results=max(10, safe_max_papers),
+        max_references_per_paper=5,
+    )
+
+    try:
+        search_payload = json.loads(raw_search)
+    except json.JSONDecodeError:
+        search_payload = {"status": "error", "papers": [], "message": "Invalid search payload."}
+
+    papers = search_payload.get("papers", []) if isinstance(search_payload, dict) else []
+    unique_papers: list[dict[str, Any]] = []
+    seen_titles: set[str] = set()
+    for paper in papers:
+        if not isinstance(paper, dict):
+            continue
+        title = str(paper.get("title", "")).strip()
+        if not title:
+            continue
+        title_key = title.lower()
+        if title_key in seen_titles:
+            continue
+        seen_titles.add(title_key)
+        unique_papers.append(
+            {
+                "paper_title": title,
+                "paper_url": paper.get("url") or "",
+                "year": paper.get("year"),
+                "source": paper.get("source") or search_payload.get("source") or "unknown",
+            }
+        )
+        if len(unique_papers) >= safe_max_papers:
+            break
+
+    aspects_catalog = _default_planning_aspects()[:safe_max_aspects]
+    aspect_records: list[dict[str, Any]] = []
+    for index, (aspect_id, aspect_title) in enumerate(aspects_catalog, start=1):
+        selected_for_aspect = [
+            paper
+            for paper_idx, paper in enumerate(unique_papers)
+            if paper_idx % safe_max_aspects == (index - 1) % safe_max_aspects
+        ]
+
+        if not selected_for_aspect and unique_papers:
+            selected_for_aspect = [unique_papers[(index - 1) % len(unique_papers)]]
+
+        aspect_filename = (
+            Path(planner_run_dir)
+            / f"{output_id}_aspect_{index:02d}_{_slugify_filename(aspect_title, max_length=40)}.md"
+        )
+
+        bullets = "\n".join(
+            [f"- {paper['paper_title']} ({paper['paper_url'] or 'no-url'})" for paper in selected_for_aspect]
+        ) or "- No seed papers available for this aspect."
+
+        aspect_markdown = (
+            f"# Planner Aspect {index:02d}: {aspect_title}\n\n"
+            f"- output_id: {output_id}\n"
+            f"- topic: {topic}\n"
+            f"- aspect_id: {aspect_id}\n\n"
+            "## Seed papers\n"
+            f"{bullets}\n"
+        )
+
+        save_markdown_file(aspect_filename.as_posix(), aspect_markdown)
+
+        aspect_records.append(
+            {
+                "aspect_id": aspect_id,
+                "aspect_title": aspect_title,
+                "aspect_file": aspect_filename.as_posix(),
+                "seed_papers": selected_for_aspect,
+            }
+        )
+
+    canonical_manifest_path = Path(planner_run_dir) / "planner_manifest.json"
+    prefixed_manifest_path = Path(planner_run_dir) / f"{output_id}_planner_manifest.json"
+
+    init_shared = initialize_shared_run(
+        planner_topic=topic,
+        planner_manifest_path=canonical_manifest_path.as_posix(),
+        base_dir="outputs/shared_runs",
+        keep_last=3,
+    )
+
+    try:
+        init_payload = json.loads(init_shared)
+    except json.JSONDecodeError:
+        init_payload = {}
+
+    shared_state_file = init_payload.get("shared_state_file", "") if isinstance(init_payload, dict) else ""
+
+    manifest = {
+        "output_id": output_id,
+        "topic": topic,
+        "planner_run_dir": planner_run_dir,
+        "shared_state_file": shared_state_file,
+        "source": search_payload.get("source", "unknown") if isinstance(search_payload, dict) else "unknown",
+        "search_status": search_payload.get("status", "unknown") if isinstance(search_payload, dict) else "unknown",
+        "aspects": aspect_records,
+        "research_assignments": [],
+    }
+
+    save_json_file(canonical_manifest_path.as_posix(), manifest)
+    save_json_file(prefixed_manifest_path.as_posix(), manifest)
+
+    selected_papers: list[dict[str, Any]] = []
+    for aspect in aspect_records:
+        aspect_id = str(aspect.get("aspect_id", ""))
+        aspect_title = str(aspect.get("aspect_title", ""))
+        for paper in aspect.get("seed_papers", []):
+            if not isinstance(paper, dict):
+                continue
+            selected_papers.append(
+                {
+                    "aspect_id": aspect_id,
+                    "aspect_title": aspect_title,
+                    "paper_title": paper.get("paper_title", ""),
+                    "paper_url": paper.get("paper_url", ""),
+                }
+            )
+
+    deduped: list[dict[str, Any]] = []
+    seen_selected: set[str] = set()
+    for record in selected_papers:
+        title = str(record.get("paper_title", "")).strip()
+        if not title:
+            continue
+        key = title.lower()
+        if key in seen_selected:
+            continue
+        seen_selected.add(key)
+        deduped.append(record)
+        if len(deduped) >= safe_max_papers:
+            break
+
+    return json.dumps(
+        {
+            "status": "success",
+            "output_id": output_id,
+            "planner_run_dir": planner_run_dir,
+            "planner_manifest": canonical_manifest_path.as_posix(),
+            "planner_manifest_prefixed": prefixed_manifest_path.as_posix(),
+            "shared_state_file": shared_state_file,
+            "selected_papers": deduped,
+            "selected_paper_count": len(deduped),
+            "aspect_count": len(aspect_records),
+            "search_message": search_payload.get("message", "") if isinstance(search_payload, dict) else "",
+        },
+        indent=2,
+    )
+
+
 def _download_binary_file(url: str, destination: Path) -> bool:
     try:
         response = requests.get(
@@ -938,11 +1129,18 @@ def get_latest_planner_manifest(base_dir: str = "outputs/planner_outputs") -> st
         raise FileNotFoundError(f"No planner run folders found in: {base_dir}")
 
     for run_dir in reversed(run_dirs):
-        manifest_path = run_dir / "planner_manifest.json"
-        if manifest_path.exists():
-            return manifest_path.as_posix()
+        canonical_manifest = run_dir / "planner_manifest.json"
+        if canonical_manifest.exists():
+            return canonical_manifest.as_posix()
 
-    raise FileNotFoundError(f"No planner_manifest.json found in any run folder under: {base_dir}")
+        # Backward/alternate compatibility for identity-prefixed manifests.
+        prefixed_manifests = sorted(run_dir.glob("*_planner_manifest.json"))
+        if prefixed_manifests:
+            return prefixed_manifests[-1].as_posix()
+
+    raise FileNotFoundError(
+        f"No planner manifest found in any run folder under: {base_dir}"
+    )
 
 def list_researcher_outputs(base_dir: str = "outputs") -> str:
     """Lists all researcher output files available for validation."""
