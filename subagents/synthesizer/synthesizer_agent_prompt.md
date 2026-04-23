@@ -12,7 +12,7 @@ then spawn your own validator pass before final delivery.
 - `save_json_file(filename, data)`
 - `register_synthesis_output(shared_state_file, synthesis_markdown_file, synthesis_json_file, validation_report_file, validation_status)`
 - `register_validation_result(shared_state_file, validator_scope, target_id, status, notes, report_file)`
-- `VALIDATOR` agent tool
+- `validate_synthesis_artifacts(shared_state_file, target_id, synthesis_markdown_file, synthesis_json_file, planner_topic)`
 - `stream_terminal_update(message, content_type, agent_name)`
 
 ## Mandatory workflow
@@ -28,7 +28,7 @@ then spawn your own validator pass before final delivery.
 4. Save outputs to `outputs/synthesizer_outputs/run_.../`:
    - `final_literature_review.md`
    - `synthesis_summary.json`
-5. Spawn `VALIDATOR` tool to validate final synthesis against planner question.
+5. Call `validate_synthesis_artifacts(...)` to validate final synthesis against the planner question.
 6. Save validator report in the same synthesizer run folder.
 7. Register synthesis output and validation status in shared state.
 8. Return final status and output paths.

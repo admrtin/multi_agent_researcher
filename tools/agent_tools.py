@@ -58,13 +58,25 @@ def _slugify_filename(value: str, max_length: int = 100) -> str:
     return slug[:max_length] if slug else "item"
 
 
+def _safe_path_with_limited_name(path: Path, max_name_length: int = 180) -> Path:
+    """Truncates the filename portion of a path to avoid OS filename-length errors."""
+    name = path.name
+    if len(name) <= max_name_length:
+        return path
+
+    suffix = "".join(path.suffixes) if path.suffixes else ""
+    stem = path.name[: -len(suffix)] if suffix else path.name
+    base_name = stem[: max(1, max_name_length - len(suffix))]
+    return path.with_name(f"{base_name}{suffix}")
+
+
 def build_researcher_output_identity(researcher_id: str, paper_title: str) -> str:
     """
     Builds a stable, paper-specific output identity used in folder names,
     filenames, and the content of researcher artifacts.
     """
-    title_slug = _slugify_filename(paper_title, max_length=70)
-    researcher_slug = _slugify_filename(researcher_id, max_length=30)
+    title_slug = _slugify_filename(paper_title, max_length=32)
+    researcher_slug = _slugify_filename(researcher_id, max_length=16)
     digest = hashlib.sha1(f"{researcher_id}:{paper_title}".encode("utf-8")).hexdigest()[:8]
     return f"{researcher_slug}_{title_slug}_{digest}"
 
@@ -551,7 +563,7 @@ def save_markdown_file(filename: str, content: str) -> str:
     """
     Saves markdown content to disk. Creates parent directories if needed.
     """
-    path = Path(filename)
+    path = _safe_path_with_limited_name(Path(filename))
 
     if path.suffix.lower() != ".md":
         path = path.with_suffix(".md")
@@ -1071,7 +1083,7 @@ def save_json_file(filename: str, data: Any) -> str:
     Saves JSON content to disk.
     Accepts Python dict/list primitives or JSON text.
     """
-    path = Path(filename)
+    path = _safe_path_with_limited_name(Path(filename))
 
     if path.suffix.lower() != ".json":
         path = path.with_suffix(".json")
@@ -1156,12 +1168,26 @@ def read_researcher_output(researcher_output_path: str) -> str:
     return json.dumps({"status": "success", "content": path.read_text(encoding="utf-8")})
 
 def get_latest_run_dir(base_dir: str = "outputs") -> str:
-    """Returns the most recent run directory path."""
+    """Returns the most recent run directory path.
+
+    Looks for run folders directly under base_dir first, then recursively under
+    nested subdirectories (for example outputs/researcher_outputs/run_*).
+    """
     base_path = Path(base_dir)
-    run_dirs = sorted(base_path.glob("run_*"), key=lambda p: p.name)
-    if not run_dirs:
-        raise FileNotFoundError("No run directories found.")
-    return run_dirs[-1].as_posix()
+    if not base_path.exists():
+        raise FileNotFoundError(f"Base directory does not exist: {base_dir}")
+
+    direct_runs = [path for path in base_path.iterdir() if path.is_dir() and path.name.startswith("run_")]
+    if direct_runs:
+        latest = max(direct_runs, key=lambda p: p.name)
+        return latest.as_posix()
+
+    nested_runs = [path for path in base_path.rglob("run_*") if path.is_dir()]
+    if nested_runs:
+        latest = max(nested_runs, key=lambda p: p.name)
+        return latest.as_posix()
+
+    raise FileNotFoundError(f"No run directories found under: {base_dir}")
 
 
 def _load_json_object(path: Path) -> dict[str, Any]:
@@ -1377,6 +1403,222 @@ def register_validation_result(
             "status": "success",
             "shared_state_file": state_path.as_posix(),
             "validation_count": len(validations),
+        },
+        indent=2,
+    )
+
+
+def _validation_report_path_from_artifact(artifact_path: Path) -> Path:
+    return artifact_path.with_name("validation_report.json")
+
+
+def _simple_text_score(text: str, keywords: list[str]) -> int:
+    lowered = text.lower()
+    return sum(1 for keyword in keywords if keyword and keyword.lower() in lowered)
+
+
+def validate_researcher_artifacts(
+    shared_state_file: str,
+    target_id: str,
+    review_markdown_file: str,
+    review_json_file: str,
+    planner_topic: str,
+) -> str:
+    """
+    Deterministic researcher validation fallback.
+
+    This avoids empty nested-validator responses by always returning a concrete
+    validation decision based on the produced artifacts.
+    """
+    md_path = Path(review_markdown_file)
+    json_path = Path(review_json_file)
+    report_path = _validation_report_path_from_artifact(md_path if md_path.exists() else json_path)
+
+    reasons: list[str] = []
+    status = "pass"
+    correlation = "medium"
+    grounding = "medium"
+
+    markdown_text = md_path.read_text(encoding="utf-8") if md_path.exists() else ""
+    json_text = json_path.read_text(encoding="utf-8") if json_path.exists() else ""
+
+    if not md_path.exists():
+        status = "fail"
+        reasons.append("markdown review file is missing")
+    if not json_path.exists():
+        status = "fail"
+        reasons.append("review JSON file is missing")
+
+    if markdown_text and len(markdown_text) < 400:
+        status = "fail"
+        reasons.append("markdown review is too short to be grounded")
+
+    if not markdown_text:
+        reasons.append("markdown content is empty")
+
+    try:
+        review_payload = json.loads(json_text) if json_text else {}
+    except json.JSONDecodeError:
+        review_payload = {}
+        status = "fail"
+        reasons.append("review JSON is not valid JSON")
+
+    if isinstance(review_payload, dict):
+        output_text = json.dumps(review_payload, ensure_ascii=False).lower()
+        if not review_payload:
+            status = "fail"
+            reasons.append("review JSON payload is empty")
+        if "output_id" not in review_payload:
+            status = "fail"
+            reasons.append("review JSON is missing output_id")
+        if _simple_text_score(output_text, [planner_topic, "method", "results", "limitations", "paper"] ) < 2:
+            correlation = "low"
+            status = "fail"
+            reasons.append("review JSON does not strongly reflect the planner topic")
+        if _simple_text_score(output_text, ["abstract", "method", "results", "limitations", "references"]) >= 3:
+            grounding = "high"
+        else:
+            grounding = "medium"
+    else:
+        status = "fail"
+        reasons.append("review JSON payload is not an object")
+
+    if markdown_text:
+        md_score = _simple_text_score(markdown_text, ["method", "results", "limitations", "relevance", planner_topic])
+        if md_score >= 3:
+            grounding = "high"
+        elif md_score <= 1:
+            grounding = "low"
+            status = "fail"
+            reasons.append("markdown review lacks evidence-focused sections")
+
+    if not reasons:
+        reasons.append("review is present, structured, and sufficiently grounded for downstream synthesis")
+
+    report = {
+        "validator_scope": "researcher",
+        "target_id": target_id,
+        "status": status,
+        "reasons": reasons,
+        "correlation_to_planner_question": correlation,
+        "scientific_grounding": grounding,
+    }
+
+    report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+
+    if shared_state_file:
+        register_validation_result(
+            shared_state_file=shared_state_file,
+            validator_scope="researcher",
+            target_id=target_id,
+            status=status,
+            notes="; ".join(reasons),
+            report_file=report_path.as_posix(),
+        )
+
+    return json.dumps(
+        {
+            "status": status,
+            "report_file": report_path.as_posix(),
+            "reasons": reasons,
+            "correlation_to_planner_question": correlation,
+            "scientific_grounding": grounding,
+            "shared_state_file": shared_state_file or None,
+        },
+        indent=2,
+    )
+
+
+def validate_synthesis_artifacts(
+    shared_state_file: str,
+    target_id: str,
+    synthesis_markdown_file: str,
+    synthesis_json_file: str,
+    planner_topic: str,
+) -> str:
+    """Deterministic synthesis validation fallback."""
+    md_path = Path(synthesis_markdown_file)
+    json_path = Path(synthesis_json_file)
+    report_path = _validation_report_path_from_artifact(md_path if md_path.exists() else json_path)
+
+    reasons: list[str] = []
+    status = "pass"
+    correlation = "medium"
+    grounding = "medium"
+
+    markdown_text = md_path.read_text(encoding="utf-8") if md_path.exists() else ""
+    json_text = json_path.read_text(encoding="utf-8") if json_path.exists() else ""
+
+    if not md_path.exists():
+        status = "fail"
+        reasons.append("synthesis markdown file is missing")
+    if not json_path.exists():
+        status = "fail"
+        reasons.append("synthesis JSON file is missing")
+
+    try:
+        synthesis_payload = json.loads(json_text) if json_text else {}
+    except json.JSONDecodeError:
+        synthesis_payload = {}
+        status = "fail"
+        reasons.append("synthesis JSON is not valid JSON")
+
+    if markdown_text and len(markdown_text) < 600:
+        status = "fail"
+        reasons.append("synthesis markdown is too short to represent a real synthesis")
+
+    if isinstance(synthesis_payload, dict):
+        payload_text = json.dumps(synthesis_payload, ensure_ascii=False).lower()
+        if _simple_text_score(payload_text, [planner_topic, "theme", "gap", "future", "comparison"]) < 2:
+            correlation = "low"
+            status = "fail"
+            reasons.append("synthesis JSON does not clearly align with the planner topic")
+        if _simple_text_score(payload_text, ["research", "paper", "method", "results", "gap"]) >= 3:
+            grounding = "high"
+    else:
+        status = "fail"
+        reasons.append("synthesis JSON payload is not an object")
+
+    if markdown_text:
+        md_score = _simple_text_score(markdown_text, ["theme", "comparison", "gap", "future", planner_topic])
+        if md_score >= 3:
+            grounding = "high"
+        elif md_score <= 1:
+            grounding = "low"
+            status = "fail"
+            reasons.append("synthesis markdown lacks cross-paper comparison")
+
+    if not reasons:
+        reasons.append("synthesis is structured and sufficiently aligned with the planner question")
+
+    report = {
+        "validator_scope": "synthesizer",
+        "target_id": target_id,
+        "status": status,
+        "reasons": reasons,
+        "correlation_to_planner_question": correlation,
+        "scientific_grounding": grounding,
+    }
+
+    report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+
+    if shared_state_file:
+        register_validation_result(
+            shared_state_file=shared_state_file,
+            validator_scope="synthesizer",
+            target_id=target_id,
+            status=status,
+            notes="; ".join(reasons),
+            report_file=report_path.as_posix(),
+        )
+
+    return json.dumps(
+        {
+            "status": status,
+            "report_file": report_path.as_posix(),
+            "reasons": reasons,
+            "correlation_to_planner_question": correlation,
+            "scientific_grounding": grounding,
         },
         indent=2,
     )
