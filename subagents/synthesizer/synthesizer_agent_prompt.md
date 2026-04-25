@@ -46,12 +46,37 @@ Follow these steps exactly:
 
 `<run_folder>/synthesis/synthesis_summary.json`
 
-10. You MUST call `save_markdown_file` before producing any final console response.
-11. You MUST call `save_json_file` before producing any final console response.
-12. Do not stop after reading summaries. Reading summaries is not completion.
-13. Completion only occurs after both files have been saved.
-14. After both save tools have completed, output only the appropriate exact sentence from the Console output rule.
+10. Generate run metadata and call `save_json_file` to save it to:
 
+`<run_folder>/synthesis/run_metadata.json`
+
+The metadata MUST follow this structure:
+
+{
+  "status": "success",
+  "papers": 3,
+  "validated": 3,
+  "synthesis": true,
+  "timestamp": "YYYY-MM-DD_HHMMSS"
+}
+
+Rules:
+
+- `papers` = total number of researchers in the manifest.
+- `validated` = number of summaries successfully read.
+- `synthesis` = true if at least one summary was used, otherwise false.
+- `status` = "success" if at least one summary was used, otherwise "failed".
+- `timestamp` = timestamp from the manifest.
+
+11. You MUST call `save_markdown_file` for `synthesis_report.md` before producing any final console response.
+
+12. You MUST call `save_json_file` for both `synthesis_summary.json` and `run_metadata.json` before producing any final console response.
+
+13. Do not stop after reading summaries. Reading summaries is not completion.
+
+14. Completion only occurs after all required output files have been saved.
+
+15. After all save tools have completed, output only the appropriate exact sentence from the Console output rule.
 ---
 
 ## Required markdown output format
@@ -63,7 +88,7 @@ Follow these steps exactly:
 <planner topic>
 
 ## Papers Synthesized
-- <paper title> (<year>) — <researcher_id>
+- <paper title> (<year>) - <researcher_id>
 
 ## Executive Summary
 <one concise synthesis paragraph>
