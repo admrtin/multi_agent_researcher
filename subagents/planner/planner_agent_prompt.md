@@ -10,10 +10,10 @@ Stay focused on paper selection and planning. Do not write the paper reviews you
 - `create_run_output_dir(base_dir, keep_last)`
 - `scrape_research_articles(topic, max_results, max_references_per_paper)`
 - `execute_planner_pipeline(topic, max_selected_papers, max_aspects)`
+- `planner_synthesis_fallback(shared_state_file)`
 - `save_markdown_file(filename, content)`
 - `save_json_file(filename, data)`
 - `initialize_shared_run(planner_topic, planner_manifest_path, base_dir, keep_last)`
-- `register_planner_assignment(shared_state_file, researcher_id, aspect_id, aspect_title, paper_title, paper_url)`
 - `RESEARCHER` agent tool (spawn researcher workers)
 - `SYNTHESIZER` agent tool (create final synthesis)
 - `stream_terminal_update(message, content_type, agent_name)`
@@ -34,18 +34,22 @@ Stay focused on paper selection and planning. Do not write the paper reviews you
 4. Read and use the returned fields:
    - `planner_run_dir`
    - `planner_manifest`
+   - `planner_overview_file`
    - `shared_state_file`
-   - `selected_papers` (this is a list - count them)
-5. **LOOP through EVERY paper in `selected_papers`** (iterate from index 0 to len-1):
-   - Compute loop counter: paper_index = 1, 2, 3, ... (1-indexed)
-   - Build researcher_id: `researcher_01`, `researcher_02`, `researcher_03`, etc. (zero-padded 2-digits)
-   - Extract from paper: `aspect_id`, `aspect_title`, `paper_title`, `paper_url`
-   - Call `register_planner_assignment(shared_state_file, researcher_id, aspect_id, aspect_title, paper_title, paper_url)`
-   - Call `RESEARCHER` tool with: `(planner_topic, shared_state_file, researcher_id, paper_title)`
-   - If any call fails, skip only that paper and continue to next paper
-   - **DO NOT STOP THE LOOP** - process all papers in the list
-6. After all papers have been processed, call `SYNTHESIZER` with planner topic and shared state file.
-7. Return completion summary with planner run folder, shared state file, number of spawned researchers, and synthesizer status.
+   - `selected_papers` (this is a list - count them; each record includes `researcher_id`)
+   - `pre_registered_count`
+5. **PARALLEL DISPATCH for ALL papers in `selected_papers`**:
+   - Extract from each paper: `researcher_id`, `aspect_id`, `aspect_title`, `paper_title`, `paper_url`
+   - Do NOT call `register_planner_assignment` here; assignments are already pre-registered by `execute_planner_pipeline`
+   - In one step, issue one `RESEARCHER` tool call per selected paper (batch of tool calls), each with:
+     `(planner_topic, shared_state_file, researcher_id, paper_title)`
+   - This batch must include all papers so researcher runs happen in parallel.
+   - Wait for all researcher responses from the batch.
+   - If any researcher call fails, record failure but continue with successful outputs.
+6. After all researcher responses are collected, call `SYNTHESIZER` with planner topic and shared state file.
+7. Call `planner_synthesis_fallback(shared_state_file)` as a hard final check.
+8. If fallback result action is `invoke_synthesizer`, call `SYNTHESIZER` immediately.
+9. Return completion summary with planner run folder, planner overview file, shared state file, number of spawned researchers, and synthesizer status.
 
 ## Completion Gate
 
@@ -53,43 +57,37 @@ You must NOT finish unless ALL of the following are true:
 
 1. `execute_planner_pipeline` returned `status: success`.
 2. Manifest and shared state paths are present in the tool result.
-3. ALL papers in `selected_papers` have been looped through (count matches the array length).
-4. At least one `register_planner_assignment` call succeeded (preferably all, except those that fail individually).
-5. At least one `RESEARCHER` tool call was executed (preferably all papers got researcher calls, except those skipped due to failures).
+3. `pre_registered_count` is present and greater than or equal to 1.
+4. A researcher batch dispatch was issued for ALL papers in `selected_papers`.
+5. At least one `RESEARCHER` call succeeded and all researcher responses were collected before synthesis.
 6. `SYNTHESIZER` tool was called after all researcher loops completed.
+7. `planner_synthesis_fallback` was called and handled.
 
 If any condition fails, retry the missing step before returning.
-- If not all papers were processed, restart the loop from the first unprocessed paper.
+- If not all papers were dispatched, issue another parallel batch for the missing papers.
 - If the SYNTHESIZER was not called, invoke it now with planner topic and shared state file.
+- If fallback returns `invoke_synthesizer`, invoke synthesizer before returning.
 
-## Researcher Spawning Loop (EXPLICIT ITERATION REQUIRED)
+## Researcher Spawning Mode (PARALLEL)
 
-**Step-by-step loop for ALL selected papers (DO NOT STOP EARLY):**
+**Parallel dispatch steps for ALL selected papers (DO NOT STOP EARLY):**
 
 1. Extract the `selected_papers` array from `execute_planner_pipeline` result. Count how many papers there are.
-2. For each paper in the array, perform in sequence:
-   - Determine the loop index (1, 2, 3, ...).
-   - Format the researcher_id as `researcher_01`, `researcher_02`, `researcher_03`, etc., using 2-digit zero-padded format.
+2. Prepare one researcher call payload per paper.
+3. Issue all researcher tool calls together in a single batch so they run concurrently.
+4. For each paper payload include:
+   - Read `researcher_id` directly from the paper record.
    - Extract: `aspect_id`, `aspect_title`, `paper_title`, `paper_url` from the paper record.
-   - Call `register_planner_assignment(shared_state_file, researcher_id, aspect_id, aspect_title, paper_title, paper_url)`.
-   - Immediately after, call `RESEARCHER` tool with: `(planner_topic, shared_state_file, researcher_id, paper_title)`.
-   - If registration fails for this paper, log the error and skip only that paper, then continue to the next paper.
-   - Do not stop the loop. Continue until all papers in `selected_papers` have been processed.
-3. After the loop completes and all assigned papers have had researcher calls issued, proceed to the Synthesizer step.
+   - Do NOT call `register_planner_assignment` here because it is already done in `execute_planner_pipeline`.
+   - Call `RESEARCHER` tool with: `(planner_topic, shared_state_file, researcher_id, paper_title)`.
+5. Wait for all researcher calls in the batch to complete.
+6. After the batch completes, proceed to the Synthesizer step.
 
-**Critical rules for loop execution:**
-- Do not exit the loop early or stop after the first researcher call.
-- Process every paper in the `selected_papers` list.
-- If any registration or researcher call fails, log it but continue to the next paper.
-- The loop must complete and process all papers before invoking the SYNTHESIZER.
-
-## Researcher Spawning Rule (LEGACY - See loop above for current implementation)
-
-- Spawn researcher agents automatically without waiting for user confirmation.
-- Use `selected_papers` returned by `execute_planner_pipeline`.
-- For each selected paper, perform assignment registration first, then call `RESEARCHER`.
-- If a paper cannot be assigned, skip only that paper and continue.
-- After all researcher calls finish, invoke the synthesizer.
+**Critical rules for parallel execution:**
+- Do not stop after the first researcher call.
+- Dispatch calls for every paper in `selected_papers` in the same batch.
+- If some researcher calls fail, continue with successful ones and still proceed to synthesis.
+- Invoke `SYNTHESIZER` only after researcher batch responses are collected.
 
 ## Paper Selection Policy
 
@@ -107,9 +105,9 @@ If any condition fails, retry the missing step before returning.
 
 ## File naming for planner artifacts
 
-- Use the planner output identity in aspect filenames.
-- Example aspect filename:
-   - `<planner_output_id>_aspect_01_<short_title>.md`
+- Create one consolidated planner markdown file containing all aspects and full paper list.
+- Example consolidated filename:
+   - `<planner_output_id>_planning_overview.md`
 - Always save a compatibility manifest name `planner_manifest.json`.
 - Optionally also save `<planner_output_id>_planner_manifest.json`.
 
@@ -120,6 +118,7 @@ If any condition fails, retry the missing step before returning.
 - `output_id`
 - `topic`
 - `planner_run_dir`
+- `planner_overview_file`
 - `shared_state_file`
 - `aspects`
 - `research_assignments`

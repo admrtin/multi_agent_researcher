@@ -165,6 +165,7 @@ def execute_planner_pipeline(
 
     aspects_catalog = _default_planning_aspects()[:safe_max_aspects]
     aspect_records: list[dict[str, Any]] = []
+    planner_overview_file = Path(planner_run_dir) / f"{output_id}_planning_overview.md"
     for index, (aspect_id, aspect_title) in enumerate(aspects_catalog, start=1):
         selected_for_aspect = [
             paper
@@ -175,34 +176,43 @@ def execute_planner_pipeline(
         if not selected_for_aspect and unique_papers:
             selected_for_aspect = [unique_papers[(index - 1) % len(unique_papers)]]
 
-        aspect_filename = (
-            Path(planner_run_dir)
-            / f"{output_id}_aspect_{index:02d}_{_slugify_filename(aspect_title, max_length=40)}.md"
-        )
-
-        bullets = "\n".join(
-            [f"- {paper['paper_title']} ({paper['paper_url'] or 'no-url'})" for paper in selected_for_aspect]
-        ) or "- No seed papers available for this aspect."
-
-        aspect_markdown = (
-            f"# Planner Aspect {index:02d}: {aspect_title}\n\n"
-            f"- output_id: {output_id}\n"
-            f"- topic: {topic}\n"
-            f"- aspect_id: {aspect_id}\n\n"
-            "## Seed papers\n"
-            f"{bullets}\n"
-        )
-
-        save_markdown_file(aspect_filename.as_posix(), aspect_markdown)
-
         aspect_records.append(
             {
                 "aspect_id": aspect_id,
                 "aspect_title": aspect_title,
-                "aspect_file": aspect_filename.as_posix(),
+                "aspect_file": planner_overview_file.as_posix(),
                 "seed_papers": selected_for_aspect,
             }
         )
+
+    overview_lines: list[str] = [
+        f"# Planner Overview ({output_id})",
+        "",
+        f"- Topic: {topic}",
+        f"- Planner run dir: {planner_run_dir}",
+        f"- Source: {search_payload.get('source', 'unknown') if isinstance(search_payload, dict) else 'unknown'}",
+        "",
+        "## Aspect Summary and Papers",
+        "",
+    ]
+
+    for idx, aspect in enumerate(aspect_records, start=1):
+        overview_lines.append(f"### Aspect {idx:02d}: {aspect.get('aspect_title', '')} ({aspect.get('aspect_id', '')})")
+        seed_papers = aspect.get("seed_papers", [])
+        if isinstance(seed_papers, list) and seed_papers:
+            for paper in seed_papers:
+                if not isinstance(paper, dict):
+                    continue
+                title = str(paper.get("paper_title", "Unknown title"))
+                year = paper.get("year")
+                url = str(paper.get("paper_url", ""))
+                year_text = f" ({year})" if year else ""
+                overview_lines.append(f"- {title}{year_text} - {url or 'no-url'}")
+        else:
+            overview_lines.append("- No seed papers available.")
+        overview_lines.append("")
+
+    save_markdown_file(planner_overview_file.as_posix(), "\n".join(overview_lines).strip() + "\n")
 
     canonical_manifest_path = Path(planner_run_dir) / "planner_manifest.json"
     prefixed_manifest_path = Path(planner_run_dir) / f"{output_id}_planner_manifest.json"
@@ -225,6 +235,7 @@ def execute_planner_pipeline(
         "output_id": output_id,
         "topic": topic,
         "planner_run_dir": planner_run_dir,
+        "planner_overview_file": planner_overview_file.as_posix(),
         "shared_state_file": shared_state_file,
         "source": search_payload.get("source", "unknown") if isinstance(search_payload, dict) else "unknown",
         "search_status": search_payload.get("status", "unknown") if isinstance(search_payload, dict) else "unknown",
@@ -265,6 +276,47 @@ def execute_planner_pipeline(
         if len(deduped) >= safe_max_papers:
             break
 
+    prepared_assignments: list[dict[str, Any]] = []
+    pre_registered_count = 0
+    pre_registration_errors: list[str] = []
+
+    for index, record in enumerate(deduped, start=1):
+        researcher_id = f"researcher_{index:02d}"
+        assignment = {
+            "researcher_id": researcher_id,
+            "aspect_id": str(record.get("aspect_id", "")),
+            "aspect_title": str(record.get("aspect_title", "")),
+            "paper_title": str(record.get("paper_title", "")),
+            "paper_url": str(record.get("paper_url", "")),
+        }
+        prepared_assignments.append(assignment)
+        record["researcher_id"] = researcher_id
+
+        if not shared_state_file:
+            pre_registration_errors.append(f"missing shared_state_file for {researcher_id}")
+            continue
+
+        try:
+            register_raw = register_planner_assignment(
+                shared_state_file=shared_state_file,
+                researcher_id=assignment["researcher_id"],
+                aspect_id=assignment["aspect_id"],
+                aspect_title=assignment["aspect_title"],
+                paper_title=assignment["paper_title"],
+                paper_url=assignment["paper_url"],
+            )
+            register_payload = json.loads(register_raw)
+            if isinstance(register_payload, dict) and register_payload.get("status") == "success":
+                pre_registered_count += 1
+            else:
+                pre_registration_errors.append(f"register failed for {researcher_id}")
+        except Exception as exc:
+            pre_registration_errors.append(f"register failed for {researcher_id}: {exc}")
+
+    manifest["research_assignments"] = prepared_assignments
+    save_json_file(canonical_manifest_path.as_posix(), manifest)
+    save_json_file(prefixed_manifest_path.as_posix(), manifest)
+
     return json.dumps(
         {
             "status": "success",
@@ -272,11 +324,58 @@ def execute_planner_pipeline(
             "planner_run_dir": planner_run_dir,
             "planner_manifest": canonical_manifest_path.as_posix(),
             "planner_manifest_prefixed": prefixed_manifest_path.as_posix(),
+            "planner_overview_file": planner_overview_file.as_posix(),
             "shared_state_file": shared_state_file,
             "selected_papers": deduped,
             "selected_paper_count": len(deduped),
+            "pre_registered_count": pre_registered_count,
+            "pre_registration_errors": pre_registration_errors,
             "aspect_count": len(aspect_records),
             "search_message": search_payload.get("message", "") if isinstance(search_payload, dict) else "",
+        },
+        indent=2,
+    )
+
+
+def planner_synthesis_fallback(shared_state_file: str) -> str:
+    """
+    Hard planner fallback checker.
+
+    If researcher outputs exist but synthesis outputs are missing, this returns
+    an explicit action instructing planner to invoke the synthesizer.
+    """
+    state_path = Path(shared_state_file)
+    state = _load_json_object(state_path)
+
+    assignments = state.get("assignments", []) if isinstance(state, dict) else []
+    research_outputs = state.get("research_outputs", []) if isinstance(state, dict) else []
+    synthesis_outputs = state.get("synthesis_outputs", []) if isinstance(state, dict) else []
+
+    assignment_count = len(assignments) if isinstance(assignments, list) else 0
+    research_count = len(research_outputs) if isinstance(research_outputs, list) else 0
+    synthesis_count = len(synthesis_outputs) if isinstance(synthesis_outputs, list) else 0
+
+    if research_count > 0 and synthesis_count == 0:
+        return json.dumps(
+            {
+                "status": "success",
+                "action": "invoke_synthesizer",
+                "reason": "research_outputs_exist_but_synthesis_missing",
+                "assignment_count": assignment_count,
+                "research_output_count": research_count,
+                "synthesis_output_count": synthesis_count,
+            },
+            indent=2,
+        )
+
+    return json.dumps(
+        {
+            "status": "success",
+            "action": "no_action",
+            "reason": "synthesis_present_or_no_research_outputs",
+            "assignment_count": assignment_count,
+            "research_output_count": research_count,
+            "synthesis_output_count": synthesis_count,
         },
         indent=2,
     )
@@ -600,13 +699,21 @@ def create_run_output_dir(base_dir: str = "outputs", keep_last: int = 3, run_nam
         run_dir = base_path / f"run_{timestamp}"
     run_dir.mkdir(parents=True, exist_ok=True)
 
+    # Parallel researcher runs can exceed low retention quickly and delete files
+    # before synthesizer consumes them. Enforce safe minimums by output type.
+    effective_keep_last = keep_last
+    if base_path.name == "researcher_outputs":
+        effective_keep_last = max(keep_last, 50)
+    elif base_path.name == "synthesizer_outputs":
+        effective_keep_last = max(keep_last, 20)
+
     run_dirs = sorted(
         [path for path in base_path.iterdir() if path.is_dir() and path.name.startswith("run_")],
         key=lambda path: path.name,
     )
 
-    if len(run_dirs) > keep_last:
-        to_delete = run_dirs[:-keep_last]
+    if len(run_dirs) > effective_keep_last:
+        to_delete = run_dirs[:-effective_keep_last]
         for old_dir in to_delete:
             try:
                 shutil.rmtree(old_dir)
