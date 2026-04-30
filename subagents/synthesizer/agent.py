@@ -23,4 +23,5 @@ synthesizer_agent = Agent(
         get_latest_run_dir,
         read_researcher_output,
     ],
+    include_contents="none",
 )

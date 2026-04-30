@@ -130,7 +130,6 @@ for i in range(1, MAX_RESEARCHER_POOL + 1):
             load_json_file,
             get_latest_planner_manifest,
             read_researcher_output,
-            exit_loop,
         ],
     )
 
@@ -143,6 +142,7 @@ for i in range(1, MAX_RESEARCHER_POOL + 1):
             + validator_prompt
         ),
         tools=[save_markdown_file, save_json_file, get_latest_planner_manifest, read_researcher_output, exit_loop],
+        include_contents="none",
     )
 
     pair = LoopAgent(

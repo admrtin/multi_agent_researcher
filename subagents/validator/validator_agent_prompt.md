@@ -2,14 +2,6 @@
 
 Your goal is to validate a single researcher's summary against the validation criteria and signal the LoopAgent when done.
 
-## Available tools
-
-- `get_latest_planner_manifest()`: Retrieve the path to the current planner manifest.
-- `read_researcher_output(filepath)`: Read a markdown or JSON file from disk.
-- `save_markdown_file(filename, content)`: Save the validation summary.
-- `save_json_file(filename, data)`: Save the validation criteria JSON.
-- `exit_loop()`: Call this tool ONLY after outputting `"Validation passed."` to signal the LoopAgent to stop iterating.
-
 ## Mandatory workflow
 
 Follow these steps exactly, in order:
