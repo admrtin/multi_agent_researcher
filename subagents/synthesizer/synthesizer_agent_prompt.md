@@ -10,6 +10,7 @@ then spawn your own validator pass before final delivery.
 - `load_json_file(filename)`
 - `save_markdown_file(filename, content)`
 - `save_json_file(filename, data)`
+- `build_synthesis_artifacts(shared_state_file)`
 - `register_synthesis_output(shared_state_file, synthesis_markdown_file, synthesis_json_file, validation_report_file, validation_status)`
 - `register_validation_result(shared_state_file, validator_scope, target_id, status, notes, report_file)`
 - `validate_synthesis_artifacts(shared_state_file, target_id, synthesis_markdown_file, synthesis_json_file, planner_topic)`
@@ -28,10 +29,19 @@ then spawn your own validator pass before final delivery.
 4. Save outputs to `outputs/synthesizer_outputs/run_.../`:
    - `final_literature_review.md`
    - `synthesis_summary.json`
-5. Call `validate_synthesis_artifacts(...)` to validate final synthesis against the planner question.
-6. Save validator report in the same synthesizer run folder.
-7. Register synthesis output and validation status in shared state.
-8. Return final status and output paths.
+5. Call `build_synthesis_artifacts(shared_state_file)` to create the synthesis run folder and files
+6. Call `validate_synthesis_artifacts(...)` to validate final synthesis against the planner question.
+7. Save validator report in the same synthesizer run folder.
+8. Confirm the returned synthesis files exist:
+   - `final_literature_review.md`
+   - `synthesis_summary.json`
+   - `validation_report.json`
+9. Register synthesis output and validation status in shared state.
+10. Return final status and output paths.
+
+
+Call `stream_terminal_update` before each major step and when final synthesis is saved.
+
 
 Call `stream_terminal_update` before each major step and when final synthesis is saved.
 

@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from google.adk.agents import Agent
 from google.adk.tools import agent_tool
@@ -18,8 +19,27 @@ from tools.agent_tools import (
     gemini_models,
 )
 
-researcher_tool = agent_tool.AgentTool(agent=researcher_agent)
-synthesizer_tool = agent_tool.AgentTool(agent=synthesizer_agent)
+
+
+def _serialize_agent_request(request: object) -> str:
+    if isinstance(request, str):
+        return request
+    try:
+        return json.dumps(request, indent=2, sort_keys=True, default=str)
+    except TypeError:
+        return str(request)
+
+
+class StructuredAgentTool(agent_tool.AgentTool):
+    async def run_async(self, *, args: dict, tool_context):
+        request = args.get("request", "")
+        if not isinstance(request, str):
+            request = _serialize_agent_request(request)
+        return await super().run_async(args={"request": request}, tool_context=tool_context)
+
+
+researcher_tool = StructuredAgentTool(agent=researcher_agent)
+synthesizer_tool = StructuredAgentTool(agent=synthesizer_agent)
 
 prompt = Path("./subagents/planner/planner_agent_prompt.md").read_text()
 agent_name = "PLANNER"

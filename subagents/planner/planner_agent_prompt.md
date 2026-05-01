@@ -41,8 +41,13 @@ Stay focused on paper selection and planning. Do not write the paper reviews you
 5. **PARALLEL DISPATCH for ALL papers in `selected_papers`**:
    - Extract from each paper: `researcher_id`, `aspect_id`, `aspect_title`, `paper_title`, `paper_url`
    - Do NOT call `register_planner_assignment` here; assignments are already pre-registered by `execute_planner_pipeline`
-   - In one step, issue one `RESEARCHER` tool call per selected paper (batch of tool calls), each with:
-     `(planner_topic, shared_state_file, researcher_id, paper_title)`
+    - In one step, issue one `RESEARCHER` tool call per selected paper (batch of tool calls).
+    - Pass the tool a plain-text request, not a tuple or JSON object.
+    - The request text must include these fields on separate lines:
+       - `planner_topic`
+       - `shared_state_file`
+       - `researcher_id`
+       - `paper_title`
    - This batch must include all papers so researcher runs happen in parallel.
    - Wait for all researcher responses from the batch.
    - If any researcher call fails, record failure but continue with successful outputs.
@@ -79,7 +84,7 @@ If any condition fails, retry the missing step before returning.
    - Read `researcher_id` directly from the paper record.
    - Extract: `aspect_id`, `aspect_title`, `paper_title`, `paper_url` from the paper record.
    - Do NOT call `register_planner_assignment` here because it is already done in `execute_planner_pipeline`.
-   - Call `RESEARCHER` tool with: `(planner_topic, shared_state_file, researcher_id, paper_title)`.
+   - Call `RESEARCHER` tool with a plain-text request that names `planner_topic`, `shared_state_file`, `researcher_id`, and `paper_title`.
 5. Wait for all researcher calls in the batch to complete.
 6. After the batch completes, proceed to the Synthesizer step.
 

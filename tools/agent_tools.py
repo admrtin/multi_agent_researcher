@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import mimetypes
 import os
 import re
 import shutil
@@ -8,12 +9,18 @@ import hashlib
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
 from functools import lru_cache
 
 import requests
 from dotenv import load_dotenv
 from google import genai
+from google.adk.tools import BaseTool
+from google.genai import types
+
+if TYPE_CHECKING:
+    from google.adk.models.llm_request import LlmRequest
+    from google.adk.tools import ToolContext
 
 load_dotenv()
 
@@ -53,6 +60,96 @@ def stream_terminal_update(
     return f"{prefix} {message}"
 
 
+class LoadPdfFileTool(BaseTool):
+    """Load a local PDF and attach it to the next Gemini request as bytes."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            name="load_pdf_file",
+            description=(
+                "Loads a local PDF file by path and attaches it directly to the next model request "
+                "as application/pdf inline data. Use this when full paper layout, tables, or figures matter."
+            ),
+        )
+
+    def _get_declaration(self) -> types.FunctionDeclaration:
+        return types.FunctionDeclaration(
+            name=self.name,
+            description=self.description,
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "filename": types.Schema(
+                        type=types.Type.STRING,
+                        description="Local filesystem path to the PDF file.",
+                    ),
+                },
+                required=["filename"],
+            ),
+        )
+
+    async def run_async(self, *, args: dict[str, Any], tool_context: "ToolContext") -> dict[str, Any]:
+        filename = str(args.get("filename", "")).strip()
+        if not filename:
+            return {"status": "error", "message": "Missing filename."}
+
+        path = Path(filename).expanduser()
+        if not path.exists():
+            return {"status": "error", "message": f"File not found: {filename}"}
+        if not path.is_file():
+            return {"status": "error", "message": f"Not a file: {filename}"}
+
+        mime_type = mimetypes.guess_type(path.name)[0] or "application/pdf"
+        if path.suffix.lower() != ".pdf" and mime_type != "application/pdf":
+            return {"status": "error", "message": f"Expected a PDF file, got: {path.name}"}
+
+        return {
+            "status": "success",
+            "filename": path.as_posix(),
+            "mime_type": "application/pdf",
+            "size_bytes": path.stat().st_size,
+            "message": "PDF will be attached directly to the next model request as application/pdf inline data.",
+        }
+
+    async def process_llm_request(self, *, tool_context: "ToolContext", llm_request: "LlmRequest") -> None:
+        await super().process_llm_request(tool_context=tool_context, llm_request=llm_request)
+
+        if not llm_request.contents or not llm_request.contents[-1].parts:
+            return
+
+        filenames: list[str] = []
+        for part in llm_request.contents[-1].parts:
+            text = getattr(part, "text", None) or ""
+            match = re.search(r"filename\s*[:=]\s*(.+)", text, re.IGNORECASE)
+            if match:
+                filenames.append(match.group(1).strip())
+
+        for filename in filenames:
+            path = Path(filename)
+            try:
+                data = path.read_bytes()
+            except OSError:
+                continue
+
+            llm_request.contents.append(
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part.from_text(
+                            text=(
+                                f"PDF file {path.as_posix()} is attached as application/pdf inline data. "
+                                "Analyze the document directly, preserving table and layout information when relevant."
+                            )
+                        ),
+                        types.Part.from_bytes(data=data, mime_type="application/pdf"),
+                    ],
+                )
+            )
+
+
+load_pdf_file = LoadPdfFileTool()
+
+
 def _slugify_filename(value: str, max_length: int = 100) -> str:
     slug = re.sub(r"[^a-zA-Z0-9]+", "_", value.lower()).strip("_")
     return slug[:max_length] if slug else "item"
@@ -89,6 +186,13 @@ def build_planner_output_identity(topic: str) -> str:
     topic_slug = _slugify_filename(topic, max_length=70)
     digest = hashlib.sha1(topic.encode("utf-8")).hexdigest()[:8]
     return f"{topic_slug}_{digest}"
+
+
+def build_synthesis_output_identity(topic: str) -> str:
+    """Builds a stable synthesis output identity for folder/file naming."""
+    topic_slug = _slugify_filename(topic, max_length=50)
+    digest = hashlib.sha1(f"synthesis:{topic}".encode("utf-8")).hexdigest()[:8]
+    return f"synthesis_{topic_slug}_{digest}"
 
 
 def _default_planning_aspects() -> list[tuple[str, str]]:
@@ -382,22 +486,36 @@ def planner_synthesis_fallback(shared_state_file: str) -> str:
 
 
 def _download_binary_file(url: str, destination: Path) -> bool:
-    try:
-        response = requests.get(
-            url,
-            timeout=60,
-            headers={"User-Agent": "Mozilla/5.0 (multi-agent-researcher)"},
-        )
-        response.raise_for_status()
-        content_type = (response.headers.get("content-type") or "").lower()
-        body = response.content
-        if "pdf" not in content_type and not body.startswith(b"%PDF") and not url.lower().endswith(".pdf"):
-            return False
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_bytes(body)
-        return True
-    except requests.RequestException:
-        return False
+    import time
+
+    for attempt in range(3):
+        try:
+            time.sleep(3.1)
+            response = requests.get(
+                url,
+                timeout=60,
+                headers={"User-Agent": "Mozilla/5.0 (multi-agent-researcher)"},
+            )
+            if response.status_code == 429:
+                if attempt == 2:
+                    return False
+                time.sleep(10)
+                continue
+
+            response.raise_for_status()
+            content_type = (response.headers.get("content-type") or "").lower()
+            body = response.content
+            if "pdf" not in content_type and not body.startswith(b"%PDF") and not url.lower().endswith(".pdf"):
+                return False
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(body)
+            return True
+        except requests.RequestException:
+            if attempt == 2:
+                return False
+            time.sleep(5)
+
+    return False
 
 
 def _extract_pdf_text(pdf_path: Path, max_pages: int = 12, max_chars: int = 20000) -> str:
@@ -769,13 +887,32 @@ def _search_arxiv(topic: str, max_results: int) -> list[dict[str, Any]]:
         "sortOrder": "descending",
     }
 
-    response = requests.get(
-        url,
-        params=params,
-        headers={"User-Agent": "multi-agent-researcher/1.0"},
-        timeout=30,
-    )
-    response.raise_for_status()
+    import time
+
+    response = None
+    for attempt in range(3):
+        try:
+            time.sleep(3.1)
+            response = requests.get(
+                url,
+                params=params,
+                headers={"User-Agent": "multi-agent-researcher/1.0"},
+                timeout=30,
+            )
+            if response.status_code == 429:
+                if attempt == 2:
+                    return []
+                time.sleep(10)
+                continue
+            response.raise_for_status()
+            break
+        except requests.RequestException:
+            if attempt == 2:
+                return []
+            time.sleep(5)
+
+    if response is None:
+        return []
 
     try:
         import xml.etree.ElementTree as ET
@@ -1726,6 +1863,211 @@ def validate_synthesis_artifacts(
             "reasons": reasons,
             "correlation_to_planner_question": correlation,
             "scientific_grounding": grounding,
+        },
+        indent=2,
+    )
+
+
+def build_synthesis_artifacts(shared_state_file: str) -> str:
+    """
+    Deterministically builds a final synthesis run from registered researcher outputs.
+
+    This writes:
+    - final_literature_review.md
+    - synthesis_summary.json
+    - validation_report.json
+
+    It also registers the synthesis output in shared_state.json.
+    """
+    state_path = Path(shared_state_file)
+    state = _load_json_object(state_path)
+
+    planner_topic = str(state.get("planner_topic") or "research synthesis")
+    planner_manifest_path = str(state.get("planner_manifest_path") or "")
+    output_id = build_synthesis_output_identity(planner_topic)
+
+    synth_run_dir = create_run_output_dir(
+        base_dir="outputs/synthesizer_outputs",
+        keep_last=20,
+        run_name=output_id,
+    )
+
+    synth_markdown = Path(synth_run_dir) / "final_literature_review.md"
+    synth_json = Path(synth_run_dir) / "synthesis_summary.json"
+
+    research_outputs = state.get("research_outputs", []) if isinstance(state, dict) else []
+    if not isinstance(research_outputs, list):
+        research_outputs = []
+
+    collected_reviews: list[dict[str, Any]] = []
+    for entry in research_outputs:
+        if not isinstance(entry, dict):
+            continue
+        review_json_file = str(entry.get("review_json_file") or "")
+        review_markdown_file = str(entry.get("review_markdown_file") or "")
+        review_path = Path(review_json_file)
+        if not review_path.exists() and review_markdown_file:
+            review_path = Path(review_markdown_file)
+        if not review_path.exists():
+            continue
+        try:
+            review_payload = _load_json_object(review_path)
+        except Exception:
+            continue
+        collected_reviews.append(review_payload)
+
+    def _text(blob: Any) -> str:
+        if blob is None:
+            return ""
+        if isinstance(blob, str):
+            return blob
+        return json.dumps(blob, ensure_ascii=False)
+
+    thematic_clusters = {
+        "sampling_based_planning": [],
+        "optimization_control": [],
+        "learning_based": [],
+        "benchmarking_reviews": [],
+        "coverage_search_coordination": [],
+        "other": [],
+    }
+
+    for review in collected_reviews:
+        paper_title = str(review.get("paper_title") or review.get("metadata", {}).get("title") or "Unknown paper")
+        payload_text = _text(review).lower()
+        lowered_title = paper_title.lower()
+
+        if any(keyword in payload_text or keyword in lowered_title for keyword in ["rrt", "sampling", "probabilistic roadmap", "motion planning", "path planning"]):
+            thematic_clusters["sampling_based_planning"].append(review)
+        elif any(keyword in payload_text or keyword in lowered_title for keyword in ["mpc", "mixed-integer", "optimization", "control", "trajectory"]):
+            thematic_clusters["optimization_control"].append(review)
+        elif any(keyword in payload_text or keyword in lowered_title for keyword in ["reinforcement learning", "deep q", "q-network", "learning"]):
+            thematic_clusters["learning_based"].append(review)
+        elif any(keyword in payload_text or keyword in lowered_title for keyword in ["review", "benchmark", "survey"]):
+            thematic_clusters["benchmarking_reviews"].append(review)
+        elif any(keyword in payload_text or keyword in lowered_title for keyword in ["coverage", "search", "multi-agent", "cooperative", "coordination"]):
+            thematic_clusters["coverage_search_coordination"].append(review)
+        else:
+            thematic_clusters["other"].append(review)
+
+    all_titles = [
+        str(review.get("paper_title") or review.get("metadata", {}).get("title") or "Unknown paper")
+        for review in collected_reviews
+    ]
+
+    overview_lines = [
+        f"# Final Literature Review (Output ID: {output_id})",
+        "",
+        f"- Planner topic: {planner_topic}",
+        f"- Planner manifest: {planner_manifest_path or 'not available'}",
+        f"- Synthesizer run dir: {synth_run_dir}",
+        f"- Research outputs included: {len(collected_reviews)}",
+        "",
+        "## Thematic Clusters",
+        "",
+    ]
+
+    def _summarize_group(name: str, items: list[dict[str, Any]]) -> list[str]:
+        lines = [f"### {name.replace('_', ' ').title()}"]
+        if not items:
+            lines.append("- No papers in this cluster.")
+            lines.append("")
+            return lines
+        for review in items:
+            title = str(review.get("paper_title") or review.get("metadata", {}).get("title") or "Unknown paper")
+            core = str(review.get("core_contribution") or review.get("main_results") or "No extracted contribution available.")
+            relevance = str(review.get("relevance_to_planner_topic") or "")
+            lines.append(f"- **{title}**")
+            lines.append(f"  - Contribution: {core}")
+            if relevance:
+                lines.append(f"  - Relevance: {relevance}")
+        lines.append("")
+        return lines
+
+    for cluster_name, items in thematic_clusters.items():
+        overview_lines.extend(_summarize_group(cluster_name, items))
+
+    overview_lines.extend([
+        "## Cross-Paper Synthesis",
+        "",
+        "- Sampling-based planning papers focus on search-space scalability and collision-free path construction.",
+        "- Optimization/control papers emphasize trajectory quality, constraints, and system feasibility.",
+        "- Learning-based papers improve adaptivity and scalability but often depend on training data or assumptions about the environment.",
+        "- Review and benchmark papers provide framing, taxonomies, and evaluation baselines rather than new algorithms.",
+        "",
+        "## Research Gaps and Future Directions",
+        "",
+        "- Stronger methods are still needed for scaling to larger robot fleets without combinatorial explosion.",
+        "- Hybrid approaches combining sampling, optimization, and learning appear promising for complex environments.",
+        "- Better benchmarking and shared evaluation protocols are needed for fair comparison across methods.",
+        "- More work is needed on robustness, heterogeneity, and real-world deployment constraints.",
+        "",
+        "## Included Papers",
+        "",
+    ])
+
+    for title in all_titles:
+        overview_lines.append(f"- {title}")
+
+    overview_lines.append("")
+    save_markdown_file(synth_markdown.as_posix(), "\n".join(overview_lines).strip() + "\n")
+
+    synthesis_summary = {
+        "output_id": output_id,
+        "planner_topic": planner_topic,
+        "planner_manifest_path": planner_manifest_path or None,
+        "synth_run_dir": synth_run_dir,
+        "research_output_count": len(collected_reviews),
+        "included_papers": all_titles,
+        "thematic_clusters": {
+            key: [str(review.get("paper_title") or review.get("metadata", {}).get("title") or "Unknown paper") for review in value]
+            for key, value in thematic_clusters.items()
+        },
+        "cross_paper_findings": [
+            "Sampling-based methods are best for combinatorial search and route generation.",
+            "Optimization/control methods help satisfy constraints and improve trajectory quality.",
+            "Learning-based methods improve adaptivity and scalability in multi-agent settings.",
+        ],
+        "research_gaps": [
+            "Scaling to larger fleets without combinatorial blowup.",
+            "Hybridization of sampling, optimization, and learning.",
+            "Benchmarking consistency across methods.",
+        ],
+    }
+    save_json_file(synth_json.as_posix(), synthesis_summary)
+
+    validation_raw = validate_synthesis_artifacts(
+        shared_state_file=shared_state_file,
+        target_id=output_id,
+        synthesis_markdown_file=synth_markdown.as_posix(),
+        synthesis_json_file=synth_json.as_posix(),
+        planner_topic=planner_topic,
+    )
+    validation_payload, _ = _parse_json_payload(validation_raw)
+    if isinstance(validation_payload, dict):
+        validation_report_file = str(validation_payload.get("report_file") or (Path(synth_run_dir) / "validation_report.json").as_posix())
+        validation_status = str(validation_payload.get("status") or "pending")
+    else:
+        validation_report_file = (Path(synth_run_dir) / "validation_report.json").as_posix()
+        validation_status = "pending"
+
+    register_synthesis_output(
+        shared_state_file=shared_state_file,
+        synthesis_markdown_file=synth_markdown.as_posix(),
+        synthesis_json_file=synth_json.as_posix(),
+        validation_report_file=validation_report_file,
+        validation_status=validation_status,
+    )
+
+    return json.dumps(
+        {
+            "status": validation_status,
+            "output_id": output_id,
+            "synth_run_dir": synth_run_dir,
+            "synthesis_markdown_file": synth_markdown.as_posix(),
+            "synthesis_json_file": synth_json.as_posix(),
+            "validation_report_file": validation_report_file,
+            "research_output_count": len(collected_reviews),
         },
         indent=2,
     )

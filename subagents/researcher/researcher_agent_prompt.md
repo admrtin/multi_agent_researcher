@@ -7,6 +7,7 @@ grounded, concise review. Focus on evidence extraction, not interpretation beyon
 
 - `create_run_output_dir(base_dir, keep_last)`
 - `research_single_paper(paper_title, max_references, max_citations)`
+- `load_pdf_file(filename)`
 - `save_markdown_file(filename, content)`
 - `save_json_file(filename, data)`
 - `get_latest_shared_state(base_dir)`
@@ -39,6 +40,8 @@ grounded, concise review. Focus on evidence extraction, not interpretation beyon
 3. Create researcher output folder in `outputs/researcher_outputs` using `create_run_output_dir(base_dir="outputs/researcher_outputs", keep_last=3, run_name="<researcher_output_identity>")`.
 4. Retrieve paper metadata with `research_single_paper`.
 5. Prefer the downloaded PDF text excerpt from the tool output if `paper_text_source="downloaded_pdf"`.
+5.1 If `downloaded_pdf_path` is present and non-empty, call `load_pdf_file(downloaded_pdf_path)` before writing the review.
+   - Use the attached PDF content for the review when it is available.
 6. Write one markdown review and one `paper_review.json` using filenames that include the stable identity and a short paper title slug, for example:
 	- `<researcher_output_identity>_<short_paper_title_slug>_review.md`
 	- `<researcher_output_identity>_<short_paper_title_slug>_paper_review.json`
