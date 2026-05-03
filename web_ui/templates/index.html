@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Research Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}" />
+  </head>
+  <body class="app-shell">
+    <div class="ambient ambient-a"></div>
+    <div class="ambient ambient-b"></div>
+
+    <header class="topbar card">
+      <div>
+        <p class="eyebrow">Multi-Agent Research Workspace</p>
+        <h1>Research synthesis dashboard</h1>
+        <p class="subtitle">Submit a prompt, watch structured agent logs, and browse the generated planner, researcher, validator, and synthesis artifacts.</p>
+      </div>
+      <div class="topbar-actions">
+        <span class="status-pill live" id="systemStatus">System live</span>
+        <button class="btn btn-secondary" type="button" id="refreshOutputs">Refresh outputs</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="card composer">
+        <div class="card-heading">
+          <div>
+            <p class="section-label">Prompt</p>
+            <h2>Start a new research run</h2>
+          </div>
+          <span class="chip">Auto-start enabled</span>
+        </div>
+
+        <form action="/submit" method="post" class="composer-form">
+          <label class="sr-only" for="prompt">Prompt / Research question</label>
+          <textarea
+            name="prompt"
+            id="prompt"
+            rows="7"
+            placeholder="Enter your research question here..."
+          >{{ latest_prompt }}</textarea>
+          <div class="composer-actions">
+            <button class="btn btn-primary" type="submit">Submit prompt</button>
+            <button class="btn btn-secondary" type="button" id="startRun">Start agent run</button>
+          </div>
+        </form>
+
+        <div class="prompt-preview">
+          <div class="prompt-preview__label">Latest prompt</div>
+          <div class="prompt-preview__body">{{ latest_prompt or 'No prompt submitted yet.' }}</div>
+        </div>
+      </section>
+
+      <section class="card logs-panel">
+        <div class="card-heading">
+          <div>
+            <p class="section-label">Live log stream</p>
+            <h2>Agent activity</h2>
+          </div>
+          <div class="log-toolbar">
+            <span class="status-pill" id="logCount">0 events</span>
+            <button class="btn btn-ghost" type="button" id="clearLogs">Clear view</button>
+          </div>
+        </div>
+        <div id="logFeed" class="log-feed" aria-live="polite"></div>
+      </section>
+
+      <section class="card artifacts-panel">
+        <div class="card-heading">
+          <div>
+            <p class="section-label">Artifacts</p>
+            <h2>Run tree</h2>
+          </div>
+          <span class="status-pill">Markdown + JSON</span>
+        </div>
+
+        <div class="artifact-map">
+          {% for category in categories %}
+            <div class="artifact-group">
+              <div class="artifact-group__head">
+                <h3>{{ category.name }}</h3>
+                <span class="chip">{{ category.runs|length }} runs</span>
+              </div>
+
+              {% if category.runs %}
+                <div class="run-rail">
+                  {% for run in category.runs %}
+                    <article class="run-card">
+                      <div class="run-card__head">
+                        <div>
+                          <div class="run-card__title">{{ run.run_name }}</div>
+                          <div class="run-card__meta">{{ run.file_count }} files · {{ run.run_path }}</div>
+                        </div>
+                      </div>
+                      <div class="file-tree">
+                        {% for file in run.files %}
+                          <a class="file-node kind-{{ file.kind }}" href="/view/?path={{ file.path|urlencode }}">
+                            <span class="node-dot"></span>
+                            <span class="file-node__body">
+                              <span class="file-node__name">{{ file.name }}</span>
+                              <span class="file-node__kind">{{ file.kind_label }}</span>
+                            </span>
+                          </a>
+                        {% endfor %}
+                      </div>
+                    </article>
+                  {% endfor %}
+                </div>
+              {% else %}
+                <p class="empty-state">No Markdown or JSON files found in this folder.</p>
+              {% endif %}
+            </div>
+          {% endfor %}
+        </div>
+      </section>
+    </main>
+
+    <script>
+      window.__INITIAL_LOG_ENTRIES__ = {{ log_entries|tojson }};
+    </script>
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+  </body>
+</html>

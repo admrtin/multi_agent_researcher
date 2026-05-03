@@ -16,3 +16,10 @@ __pycache__
 
 # Papers
 papers/*
+
+# web_ui logs
+web_ui/inputs/*
+web_ui/outputs/*
+web_ui/outputs
+web_ui/venv/*
+web_ui_last_prompt.txt
