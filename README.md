@@ -209,6 +209,65 @@ This file tracks:
 
 ---
 
+## Running the Web UI
+
+The web UI provides a browser-based way to submit prompts, view live logs, and inspect Markdown outputs.
+
+### 1. Create the web UI virtual environment
+
+From the repository root:
+
+```bash
+cd multi_agent_researcher
+python3 -m venv web_ui/venv
+```
+
+### 2. Install dependencies into the web UI environment
+
+```bash
+web_ui/venv/bin/python -m pip install --upgrade pip
+web_ui/venv/bin/python -m pip install -r requirements.txt
+```
+
+If you use Vertex AI, make sure the environment variables from the setup section are configured before starting the app.
+
+### 3. Start the web UI
+
+```bash
+PORT=8080 web_ui/run.sh
+```
+
+Then open:
+
+```text
+http://127.0.0.1:8080
+```
+
+### 4. How the web UI is organized
+
+- Prompt input is saved in `web_ui/inputs/`
+- Live log output is streamed from the agent log file and shown in the browser
+- Output browsing is read from `web_ui/outputs/`, which points at the shared generated outputs location
+- The web UI virtual environment lives in `web_ui/venv/`
+
+### 5. Typical run flow
+
+1. Start the web UI
+2. Submit a research prompt
+3. Watch the live logs for planner, researcher, validator, and synthesizer activity
+4. Open Markdown artifacts from the output tree
+5. Click `Refresh outputs` if you want to reload the Markdown catalog without clearing the log stream
+
+### 6. Notes
+
+- The UI is designed to keep runtime artifacts out of version control.
+- If you need a clean run, clear generated output folders before starting a new prompt.
+- To reproduce the current implementation exactly, use the repository's `requirements.txt` and the scripts under `web_ui/`.
+
+
+
+---
+
 ## Continuation Workflows
 
 ### Continue from the latest planner run
